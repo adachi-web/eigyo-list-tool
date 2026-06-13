@@ -7,8 +7,9 @@ import base64
 import json
 
 # ========== 認証情報 ==========
-API_LOGIN = "adachi@hyn.co.jp"
-API_PASSWORD = "08dfc6293540a73d"
+import os
+API_LOGIN = os.environ.get("DATAFORSEO_LOGIN", st.secrets.get("DATAFORSEO_LOGIN", ""))
+API_PASSWORD = os.environ.get("DATAFORSEO_PASSWORD", st.secrets.get("DATAFORSEO_PASSWORD", ""))
 
 # ========== ページ設定 ==========
 st.set_page_config(
