@@ -134,7 +134,7 @@ AREAS = {
     "香川県": ["高松市","丸亀市","坂出市","善通寺市","観音寺市","さぬき市","東かがわ市","三豊市","その他（直接入力）"],
     "愛媛県": ["松山市","今治市","新居浜市","西条市","宇和島市","四国中央市","大洲市","伊予市","その他（直接入力）"],
     "高知県": ["高知市","南国市","四万十市","宿毛市","土佐清水市","須崎市","香南市","香美市","その他（直接入力）"],
-    "福岡県": ["福岡市東区","福岡市博多区","福岡市中央区","福岡市南区","福岡市西区","福岡市城南区","福岡市早良区","北九州市門司区","北九州市若松区","北九州市戸畑区","北九州市小倉北区","北九州市小倉南区","北九州市八幡東区","北九州市八幡西区","久留米市","飯塚市","大牟田市","春日市","太宰府市","糸島市","筑紫野市","宗像市","古賀市","福津市","行橋市","柳川市","八女市","筑後市","大川市","豊前市","中間市","小郡市","大野城市","那珂川市","うきは市","宮若市","嘉麻市","朝倉市","みやま市","糟屋郡宇美町","糟屋郡篠栗町","糟屋郡志免町","糟屋郡須恵町","糟屋郡新宮町","糟屋郡久山町","糟屋郡粕屋町","遠賀郡芦屋町","遠賀郡水巻町","遠賀郡岡垣町","遠賀郡遠賀町","鞍手郡小竹町","鞍手郡鞍手町","嘉穂郡桂川町","朝倉郡筑前町","朝倉郡東峰村","三井郡大刀洗町","三潴郡大木町","八女郡広川町","田川郡香春町","田川郡添田町","田川郡糸田町","田川郡川崎町","田川郡大任町","田川郡赤村","田川郡福智町","京都郡苅田町","京都郡みやこ町","築上郡吉富町","築上郡上毛町","築上郡築上町","その他（直接入力）"],
+    "福岡県": ["福岡市東区","福岡市博多区","福岡市中央区","福岡市南区","福岡市西区","福岡市城南区","福岡市早良区","北九州市門司区","北九州市若松区","北九州市戸畑区","北九州市小倉北区","北九州市小倉南区","北九州市八幡東区","北九州市八幡西区","久留米市","飯塚市","大牟田市","春日市","太宰府市","糸島市","筑紫野市","宗像市","古賀市","福津市","行橋市","柳川市","八女市","筑後市","大川市","豊前市","中間市","小郡市","大野城市","那珂川市","うきは市","宮若市","嘉麻市","朝倉市","みやま市","糟屋郡宇美町","糟屋郡篠栗町","糟屋郡志免町","糟屋郡須恵町","糟屋郡新宮町","糟屋郡久山町","糟屋郡粕屋町","遠賀郡芦屋町","遠賀郡水巻町","遠賀郡岡垣町","遠賀郡遠賀町","鞍手郡小竹町","鞍手郡鍍手町","嘉穂郡桂川町","朝倉郡筑前町","朝倉郡東峰村","三井郡大刀洗町","三潴郡大木町","八女郡広川町","田川郡香春町","田川郡添田町","田川郡糸田町","田川郡川崎町","田川郡大任町","田川郡赤村","田川郡福智町","京都郡苅田町","京都郡みやこ町","築上郡吉富町","築上郡上毛町","築上郡築上町","その他（直接入力）"],
     "佐賀県": ["佐賀市","唐津市","鳥栖市","伊万里市","武雄市","鹿島市","小城市","嬉野市","神埼市","多久市","その他（直接入力）"],
     "長崎県": ["長崎市","佐世保市","諫早市","大村市","島原市","対馬市","五島市","壱岐市","平戸市","松浦市","その他（直接入力）"],
     "熊本県": ["熊本市中央区","熊本市東区","熊本市西区","熊本市南区","熊本市北区","八代市","天草市","菊池市","合志市","山鹿市","玉名市","宇土市","阿蘇市","人吉市","荒尾市","水俣市","その他（直接入力）"],
@@ -340,6 +340,14 @@ if final_areas and final_gyoshu:
     </div>
     """, unsafe_allow_html=True)
 
+# ========== セッションステート初期化 ==========
+if 'extraction_done' not in st.session_state:
+    st.session_state.extraction_done = False
+    st.session_state.results_data = None
+    st.session_state.areas_extracted = ""
+    st.session_state.results_count = 0
+    st.session_state.dedup_count = 0
+
 # 抽出ボタン
 if st.button("🔍 抽出開始", disabled=not (final_areas and final_gyoshu)):
     all_results = []
@@ -369,22 +377,38 @@ if st.button("🔍 抽出開始", disabled=not (final_areas and final_gyoshu)):
     status.empty()
     progress_bar.progress(1.0)
 
+    # ========== セッションステートに保存 ==========
+    st.session_state.extraction_done = True
+    st.session_state.results_data = unique_results
+    st.session_state.areas_extracted = ", ".join(final_areas)
+    st.session_state.results_count = len(all_results)
+    st.session_state.dedup_count = dedup_count
+
+# ========== 抽出結果表示（セッションステート使用） ==========
+if st.session_state.extraction_done and st.session_state.results_data:
+    unique_results = st.session_state.results_data
+    
     st.markdown(f"""
     <div class="result-box">
         ✅ <b>抽出完了！</b><br>
-        取得件数: {len(all_results)}件 → 重複除去: {dedup_count}件 → <b>{len(unique_results)}件</b>
+        取得件数: {st.session_state.results_count}件 → 重複除去: {st.session_state.dedup_count}件 → <b>{len(unique_results)}件</b>
     </div>
     """, unsafe_allow_html=True)
 
     if unique_results:
         csv_data = to_csv(unique_results)
         from datetime import datetime
-        filename = f"営業リスト_{final_areas[0]}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        
+        # ファイル名を改善（複数地区対応）
+        areas_short = st.session_state.areas_extracted[:20] if len(st.session_state.areas_extracted) > 20 else st.session_state.areas_extracted
+        filename = f"営業リスト_{areas_short}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        
         st.download_button(
             label="📥 CSVダウンロード",
             data=csv_data,
             file_name=filename,
             mime="text/csv",
+            key="download_csv"  # ユニークキーを明示的に設定
         )
 
         # プレビュー
