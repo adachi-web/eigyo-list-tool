@@ -5,11 +5,19 @@ import io
 import time
 import base64
 import json
+import os
+import pandas as pd
+from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ========== 認証情報 ==========
-import os
 API_LOGIN = os.environ.get("DATAFORSEO_LOGIN", st.secrets.get("DATAFORSEO_LOGIN", ""))
 API_PASSWORD = os.environ.get("DATAFORSEO_PASSWORD", st.secrets.get("DATAFORSEO_PASSWORD", ""))
+
+# ========== 並列設定 ==========
+# DataForSEO live は同時30本まで。depth700は重いので控えめに設定。
+# レート制限エラーが出る場合はこの値を下げてください。
+MAX_WORKERS = 8
 
 # ========== ページ設定 ==========
 st.set_page_config(
@@ -263,6 +271,8 @@ def fetch_single(keyword, area):
         return [], False
 
 def fetch_google_maps(keyword, area, progress_cb=None):
+    """1クエリ分の取得。700件上限に達したら区単位で自動分割。
+    ※スレッドから呼ぶ場合は progress_cb=None にすること（st.* をスレッドから呼ぶと壊れるため）。"""
     results, hit_limit = fetch_single(keyword, area)
     if hit_limit and area in CITY_DISTRICTS:
         districts = CITY_DISTRICTS[area]
@@ -272,7 +282,7 @@ def fetch_google_maps(keyword, area, progress_cb=None):
                 progress_cb(f"📍 {district} を検索中... ({i+1}/{len(districts)})")
             sub_results, _ = fetch_single(keyword, district)
             results.extend(sub_results)
-            time.sleep(0.5)
+            time.sleep(0.3)
     return results, hit_limit
 
 def deduplicate(results):
@@ -340,6 +350,17 @@ if final_areas and final_gyoshu:
     </div>
     """, unsafe_allow_html=True)
 
+    # クエリ数が多い場合の警告
+    if total_queries > 80:
+        st.markdown(f"""
+        <div class="warn-box">
+            ⚠️ <b>{total_queries}クエリは多めです。</b>
+            区分割が入るとさらに増え、完了まで数十分かかる場合があります。<br>
+            処理中はブラウザのタブを開いたままにしてください（接続が切れると中断されます）。
+            分割して実行するのが確実です。
+        </div>
+        """, unsafe_allow_html=True)
+
 # ========== セッションステート初期化 ==========
 if 'extraction_done' not in st.session_state:
     st.session_state.extraction_done = False
@@ -350,30 +371,46 @@ if 'extraction_done' not in st.session_state:
 
 # 抽出ボタン
 if st.button("🔍 抽出開始", disabled=not (final_areas and final_gyoshu)):
-    all_results = []
-    total_queries = len(final_areas) * len(final_gyoshu)
-    progress_bar = st.progress(0)
-    status = st.empty()
-    log = st.empty()
-    count = 0
+    # 全クエリの一覧を作成
+    query_list = [(g, a) for a in final_areas for g in final_gyoshu]
+    total_queries = len(query_list)
 
-    for area in final_areas:
-        for gyoshu in final_gyoshu:
-            count += 1
-            status.markdown(f"⏳ **[{count}/{total_queries}]** 「{gyoshu} {area}」を検索中...")
-            def cb(msg):
-                log.markdown(f"<div class='split-box'>⚡ {msg}</div>", unsafe_allow_html=True)
-            results, hit_limit = fetch_google_maps(gyoshu, area, progress_cb=cb)
-            if hit_limit and area in CITY_DISTRICTS:
-                log.markdown(f"<div class='warn-box'>⚠️ 700件上限 → {area}を区単位に自動分割して再取得しました</div>", unsafe_allow_html=True)
-            all_results.extend(results)
-            progress_bar.progress(count / total_queries)
-            if count < total_queries:
-                time.sleep(0.5)
+    progress_bar = st.progress(0.0)
+    status = st.empty()
+    split_note = st.empty()
+    all_results = []
+    done = 0
+    split_areas = []
+
+    # 並列実行（ワーカー内では st.* を呼ばない → progress_cb=None）
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        future_map = {
+            executor.submit(fetch_google_maps, g, a, None): (g, a)
+            for (g, a) in query_list
+        }
+        for future in as_completed(future_map):
+            g, a = future_map[future]
+            done += 1
+            note = ""
+            try:
+                results, hit_limit = future.result()
+                all_results.extend(results)
+                if hit_limit and a in CITY_DISTRICTS:
+                    note = "（700件上限 → 区単位に自動分割）"
+                    if a not in split_areas:
+                        split_areas.append(a)
+            except Exception as e:
+                note = f"（エラー: {e}）"
+            status.markdown(f"⏳ **[{done}/{total_queries}]** 完了：{g} {a} {note}")
+            progress_bar.progress(done / total_queries)
+
+    if split_areas:
+        split_note.markdown(
+            f"<div class='split-box'>⚡ 自動分割したエリア: {', '.join(split_areas)}</div>",
+            unsafe_allow_html=True)
 
     unique_results = deduplicate(all_results)
     dedup_count = len(all_results) - len(unique_results)
-    log.empty()
     status.empty()
     progress_bar.progress(1.0)
 
@@ -387,7 +424,7 @@ if st.button("🔍 抽出開始", disabled=not (final_areas and final_gyoshu)):
 # ========== 抽出結果表示（セッションステート使用） ==========
 if st.session_state.extraction_done and st.session_state.results_data:
     unique_results = st.session_state.results_data
-    
+
     st.markdown(f"""
     <div class="result-box">
         ✅ <b>抽出完了！</b><br>
@@ -397,22 +434,20 @@ if st.session_state.extraction_done and st.session_state.results_data:
 
     if unique_results:
         csv_data = to_csv(unique_results)
-        from datetime import datetime
-        
+
         # ファイル名を改善（複数地区対応）
         areas_short = st.session_state.areas_extracted[:20] if len(st.session_state.areas_extracted) > 20 else st.session_state.areas_extracted
         filename = f"営業リスト_{areas_short}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-        
+
         st.download_button(
             label="📥 CSVダウンロード",
             data=csv_data,
             file_name=filename,
             mime="text/csv",
-            key="download_csv"  # ユニークキーを明示的に設定
+            key="download_csv",
         )
 
         # プレビュー
-        import pandas as pd
         df = pd.DataFrame(unique_results)
         st.markdown("#### プレビュー（最初の10件）")
         st.dataframe(df.head(10), use_container_width=True)
